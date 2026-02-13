@@ -518,6 +518,108 @@ async def clear_p2p_state():
     return {"status": "cleared"}
 
 
+# ============================================
+# Proactive Messaging: Nanobot → ARGUS
+# ============================================
+
+class MessageToArgus(BaseModel):
+    message: str
+    priority: str = "normal"  # normal, high, critical
+
+
+@app.post("/argus/notify")
+async def notify_argus(request: MessageToArgus):
+    """
+    Send a proactive notification to ARGUS.
+
+    Nanobot initiates contact with ARGUS.
+    """
+    from .argus_client import notify_argus as do_notify
+
+    result = do_notify(
+        title="Nanobot Nachricht",
+        body=request.message,
+        priority=request.priority
+    )
+
+    log_exchange("OUT", "nanobot", "argus", request.message,
+                 result.get("message", "")[:100] if result.get("success") else "FAILED")
+
+    return result
+
+
+@app.post("/argus/ask")
+async def ask_argus_endpoint(request: PromptRequest):
+    """
+    Ask ARGUS a question and get response.
+
+    Nanobot asks ARGUS for help/information.
+    """
+    from .argus_client import ask_argus
+
+    response = ask_argus(request.prompt)
+
+    log_exchange("OUT", "nanobot", "argus", f"Frage: {request.prompt}",
+                 response[:100] if response else "No response")
+
+    return {
+        "success": response is not None,
+        "question": request.prompt,
+        "response": response
+    }
+
+
+@app.post("/argus/report")
+async def report_to_argus(report_type: str, content: str):
+    """
+    Send a report to ARGUS.
+
+    Types: github, digest, discovery, error, success
+    """
+    from .argus_client import report_to_argus as do_report
+
+    result = do_report(report_type, content)
+
+    log_exchange("OUT", "nanobot", "argus", f"Report ({report_type})",
+                 result.get("message", "")[:100] if result.get("success") else "FAILED")
+
+    return result
+
+
+@app.get("/argus/status")
+async def argus_status():
+    """Check if ARGUS is online."""
+    from .argus_client import check_argus
+
+    online = check_argus()
+    return {
+        "peer": "argus",
+        "status": "online" if online else "offline",
+        "url": "http://127.0.0.1:3200"
+    }
+
+
+@app.post("/github/{owner}/{repo}/watch-and-notify")
+async def github_watch_and_notify(owner: str, repo: str):
+    """
+    Watch GitHub repo AND proactively notify ARGUS.
+
+    This is the bidirectional version - Nanobot watches and
+    automatically tells ARGUS about the results.
+    """
+    from .github_watcher import watch_and_notify
+
+    full_repo = f"{owner}/{repo}"
+
+    result = watch_and_notify(full_repo, notify_argus=True)
+
+    log_exchange("OUT", "nanobot", "argus",
+                 f"GitHub Watch: {full_repo}",
+                 f"Notified: {result.get('notified')}, New: {result.get('new_activity')}")
+
+    return result
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)

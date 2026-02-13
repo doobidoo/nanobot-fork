@@ -184,5 +184,38 @@ DONE"""
     return report
 
 
+def watch_and_notify(repo: str, notify_argus: bool = True) -> dict:
+    """
+    Watch a repository and optionally notify ARGUS proactively.
+
+    Returns:
+        dict with report and notification status
+    """
+    report = generate_github_report(repo)
+    activity = get_recent_activity(repo, days=1)
+
+    result = {
+        "repo": repo,
+        "report": report,
+        "new_activity": activity["new_issues"] > 0 or activity["new_prs"] > 0,
+        "notified": False
+    }
+
+    if notify_argus:
+        from .argus_client import on_github_watch_complete
+
+        has_new = activity["new_issues"] > 0 or activity["new_prs"] > 0
+
+        # Notify ARGUS proactively
+        on_github_watch_complete(
+            repo=repo,
+            report=report,
+            has_new_issues=has_new
+        )
+        result["notified"] = True
+
+    return result
+
+
 if __name__ == "__main__":
     print(generate_github_report("doobidoo/mcp-memory-service"))
