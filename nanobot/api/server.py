@@ -354,6 +354,64 @@ async def daily_digest(conversation_id: str = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/github/{owner}/{repo}")
+async def github_watch(owner: str, repo: str, conversation_id: str = None):
+    """
+    Get GitHub Issues/PR report for a repository.
+
+    Called by ARGUS for repo monitoring.
+    Includes safeguards to prevent infinite loops.
+    """
+    from .p2p_protocol import (
+        check_safeguards, start_conversation, record_turn,
+        end_conversation, cleanup_old_conversations
+    )
+    from .github_watcher import generate_github_report
+
+    full_repo = f"{owner}/{repo}"
+
+    # Generate conversation ID if not provided
+    if not conversation_id:
+        conversation_id = f"github-{owner}-{repo}-{datetime.now().strftime('%Y%m%d-%H%M')}"
+
+    # Check safeguards
+    should_respond, reason = check_safeguards(conversation_id, "argus")
+    if not should_respond:
+        log_exchange("BLOCKED", "argus", "nanobot", f"github watch {full_repo}: {reason}")
+        return {
+            "success": False,
+            "blocked": True,
+            "reason": reason,
+            "conversation_id": conversation_id
+        }
+
+    # Start conversation
+    start_conversation(conversation_id, "argus")
+
+    try:
+        report = generate_github_report(full_repo)
+
+        # Record turn and end
+        record_turn(conversation_id)
+        end_conversation(conversation_id, "github_report_complete")
+        cleanup_old_conversations(24)
+
+        # Log exchange
+        log_exchange("IN", "argus", "nanobot", f"github watch {full_repo}", report[:100])
+
+        return {
+            "success": True,
+            "repo": full_repo,
+            "report": report,
+            "conversation_id": conversation_id,
+            "completed": True
+        }
+
+    except Exception as e:
+        end_conversation(conversation_id, f"error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/p2p/state")
 async def p2p_state():
     """Get current P2P protocol state (for debugging)."""
