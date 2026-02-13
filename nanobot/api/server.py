@@ -274,6 +274,21 @@ async def clear_logs():
     return {"status": "cleared"}
 
 
+@app.get("/monitor")
+async def monitor():
+    """Serve the P2P Monitor HTML page."""
+    from fastapi.responses import HTMLResponse
+    monitor_file = Path.home() / "p2p-monitor/index.html"
+    if monitor_file.exists():
+        # Update URLs in HTML to use relative paths
+        html = monitor_file.read_text()
+        # Replace localhost URLs with relative paths (same origin)
+        html = html.replace("http://127.0.0.1:8888", "")
+        html = html.replace("http://127.0.0.1:3200", "http://127.0.0.1:3200")  # ARGUS stays absolute
+        return HTMLResponse(content=html)
+    raise HTTPException(status_code=404, detail="Monitor page not found")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
