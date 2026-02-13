@@ -412,6 +412,96 @@ async def github_watch(owner: str, repo: str, conversation_id: str = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================
+# Multi-Turn Conversation Endpoint
+# ============================================
+
+@app.post("/chat/{owner}/{repo}")
+async def github_chat(owner: str, repo: str, request: PromptRequest):
+    """
+    Multi-turn GitHub issue dialog.
+
+    Supports real back-and-forth conversation:
+    - Start with: {"prompt": "start"} or empty prompt
+    - Continue with: issue numbers, actions, or responses
+    - End with: "fertig", "done", "nein"
+
+    Returns options for next steps to enable structured dialog.
+    """
+    from .conversation import handle_github_dialog
+
+    full_repo = f"{owner}/{repo}"
+
+    # Generate conversation ID based on repo
+    conv_id = f"chat-{owner}-{repo}"
+
+    # Handle the dialog
+    user_input = request.prompt or "start"
+    result = handle_github_dialog(conv_id, user_input, full_repo)
+
+    # Log the exchange
+    log_exchange("CHAT", "argus", "nanobot",
+                 f"{full_repo}: {user_input[:50]}",
+                 result["response"][:100] if result.get("response") else "")
+
+    return {
+        "success": True,
+        "repo": full_repo,
+        "conversation_id": conv_id,
+        "response": result["response"],
+        "options": result.get("options", []),
+        "waiting_for": result.get("waiting_for"),
+        "done": result.get("done", False)
+    }
+
+
+@app.delete("/chat/{owner}/{repo}")
+async def end_chat(owner: str, repo: str):
+    """End a multi-turn conversation and clear state."""
+    from .conversation import end_conversation, get_conversation
+
+    conv_id = f"chat-{owner}-{repo}"
+    conv = get_conversation(conv_id)
+
+    if conv:
+        end_conversation(conv_id)
+        return {
+            "success": True,
+            "message": f"Conversation {conv_id} ended",
+            "turns": conv.get("turn", 0)
+        }
+
+    return {
+        "success": False,
+        "message": f"No active conversation for {owner}/{repo}"
+    }
+
+
+@app.get("/chat/{owner}/{repo}/history")
+async def chat_history(owner: str, repo: str):
+    """Get conversation history for a repo dialog."""
+    from .conversation import get_conversation
+
+    conv_id = f"chat-{owner}-{repo}"
+    conv = get_conversation(conv_id)
+
+    if conv:
+        return {
+            "success": True,
+            "conversation_id": conv_id,
+            "topic": conv.get("topic"),
+            "status": conv.get("status"),
+            "turns": conv.get("turn", 0),
+            "messages": conv.get("messages", []),
+            "context": conv.get("context", {})
+        }
+
+    return {
+        "success": False,
+        "message": f"No conversation found for {owner}/{repo}"
+    }
+
+
 @app.get("/p2p/state")
 async def p2p_state():
     """Get current P2P protocol state (for debugging)."""
