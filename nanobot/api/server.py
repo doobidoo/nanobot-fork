@@ -42,10 +42,28 @@ CLAUDE_SESSION = "claude"
 
 def log_exchange(direction: str, source: str, target: str, message: str, response: str = None):
     """Log P2P exchanges for debugging and monitoring."""
-    if response:
-        logger.info(f"{direction} | {source} → {target} | Q: {message[:100]}... | A: {response[:100]}...")
+    # Clean message - remove newlines for single-line logs
+    clean_msg = message.replace('\n', ' ')[:80]
+    clean_resp = response.replace('\n', ' ')[:80] if response else ""
+
+    # Visual prefix based on direction
+    if direction == "OUT":
+        prefix = "🟢 OUT"  # Green for outgoing
+    elif direction == "IN":
+        prefix = "🔵 IN"   # Blue for incoming
+    elif direction == "CHAT":
+        prefix = "💬 CHAT"
+    elif direction == "BLOCKED":
+        prefix = "🔴 BLOCKED"
     else:
-        logger.info(f"{direction} | {source} → {target} | {message[:200]}")
+        prefix = direction
+
+    if response:
+        log_line = f"{prefix} | {source} → {target} | {clean_msg} | {clean_resp}"
+    else:
+        log_line = f"{prefix} | {source} → {target} | {clean_msg}"
+
+    logger.info(log_line)
 
 
 class PromptRequest(BaseModel):
@@ -541,10 +559,7 @@ async def notify_argus(request: MessageToArgus):
         body=request.message,
         priority=request.priority
     )
-
-    log_exchange("OUT", "nanobot", "argus", request.message,
-                 result.get("message", "")[:100] if result.get("success") else "FAILED")
-
+    # Logging handled by argus_client.log_outgoing()
     return result
 
 
@@ -558,10 +573,7 @@ async def ask_argus_endpoint(request: PromptRequest):
     from .argus_client import ask_argus
 
     response = ask_argus(request.prompt)
-
-    log_exchange("OUT", "nanobot", "argus", f"Frage: {request.prompt}",
-                 response[:100] if response else "No response")
-
+    # Logging handled by argus_client.log_outgoing()
     return {
         "success": response is not None,
         "question": request.prompt,
@@ -579,10 +591,7 @@ async def report_to_argus(report_type: str, content: str):
     from .argus_client import report_to_argus as do_report
 
     result = do_report(report_type, content)
-
-    log_exchange("OUT", "nanobot", "argus", f"Report ({report_type})",
-                 result.get("message", "")[:100] if result.get("success") else "FAILED")
-
+    # Logging handled by argus_client.log_outgoing()
     return result
 
 
@@ -610,13 +619,8 @@ async def github_watch_and_notify(owner: str, repo: str):
     from .github_watcher import watch_and_notify
 
     full_repo = f"{owner}/{repo}"
-
     result = watch_and_notify(full_repo, notify_argus=True)
-
-    log_exchange("OUT", "nanobot", "argus",
-                 f"GitHub Watch: {full_repo}",
-                 f"Notified: {result.get('notified')}, New: {result.get('new_activity')}")
-
+    # Logging handled by argus_client.log_outgoing()
     return result
 
 

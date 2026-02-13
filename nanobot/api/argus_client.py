@@ -21,14 +21,16 @@ LOG_FILE = Path.home() / ".local/share/nanobot-p2p.log"
 
 
 def log_outgoing(message: str, response: str = None):
-    """Log outgoing messages to ARGUS."""
+    """Log outgoing messages to ARGUS - only to file, not logger (to avoid duplicates)."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    if response:
-        log_line = f"{timestamp} | OUT | nanobot → argus | Q: {message[:80]}... | A: {response[:80]}..."
-    else:
-        log_line = f"{timestamp} | OUT | nanobot → argus | {message[:150]}"
+    # Clean message - remove newlines
+    clean_msg = message.replace('\n', ' ')[:80]
+    clean_resp = response.replace('\n', ' ')[:80] if response else ""
 
-    logger.info(log_line)
+    if response:
+        log_line = f"{timestamp} | 🟢 OUT | nanobot → argus | {clean_msg} | {clean_resp}"
+    else:
+        log_line = f"{timestamp} | 🟢 OUT | nanobot → argus | {clean_msg}"
 
     try:
         with open(LOG_FILE, "a") as f:
