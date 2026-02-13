@@ -289,6 +289,87 @@ async def monitor():
     raise HTTPException(status_code=404, detail="Monitor page not found")
 
 
+# ============================================
+# Daily Digest Endpoint (with Safeguards)
+# ============================================
+
+@app.get("/digest")
+async def daily_digest(conversation_id: str = None):
+    """
+    Generate daily digest with P2P safeguards.
+
+    Called by ARGUS for daily summary.
+    Includes safeguards to prevent infinite loops.
+    """
+    from .p2p_protocol import (
+        check_safeguards, start_conversation, record_turn,
+        end_conversation, cleanup_old_conversations
+    )
+    from .daily_digest import generate_daily_digest
+
+    # Generate conversation ID if not provided
+    if not conversation_id:
+        conversation_id = f"digest-{datetime.now().strftime('%Y%m%d-%H%M')}"
+
+    # Check safeguards
+    should_respond, reason = check_safeguards(conversation_id, "argus")
+    if not should_respond:
+        log_exchange("BLOCKED", "argus", "nanobot", f"digest request: {reason}")
+        return {
+            "success": False,
+            "blocked": True,
+            "reason": reason,
+            "conversation_id": conversation_id
+        }
+
+    # Start/continue conversation
+    start_conversation(conversation_id, "argus")
+
+    # Generate digest
+    try:
+        digest = generate_daily_digest()
+
+        # Record this turn
+        record_turn(conversation_id)
+
+        # End conversation (digest is always one-shot)
+        end_conversation(conversation_id, "digest_complete")
+
+        # Cleanup old conversations
+        cleanup_old_conversations(24)
+
+        # Log the exchange
+        log_exchange("IN", "argus", "nanobot", "digest request", digest[:100])
+
+        return {
+            "success": True,
+            "digest": digest,
+            "conversation_id": conversation_id,
+            "turns": 1,
+            "completed": True
+        }
+
+    except Exception as e:
+        end_conversation(conversation_id, f"error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/p2p/state")
+async def p2p_state():
+    """Get current P2P protocol state (for debugging)."""
+    from .p2p_protocol import load_state
+    return load_state()
+
+
+@app.delete("/p2p/state")
+async def clear_p2p_state():
+    """Clear P2P protocol state."""
+    from .p2p_protocol import STATE_FILE
+    if STATE_FILE.exists():
+        STATE_FILE.unlink()
+    return {"status": "cleared"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
