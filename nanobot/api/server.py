@@ -6,20 +6,46 @@ Enables peer-to-peer communication with ARGUS and other services.
 import asyncio
 import subprocess
 import os
+import logging
+from datetime import datetime
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
+
+# Setup logging
+LOG_DIR = Path.home() / ".local/share"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / "nanobot-p2p.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("p2p")
 
 app = FastAPI(
     title="Nanobot API",
     description="P2P API for Nanobot - enables communication with ARGUS and other peers",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 # Paths
 SKILL_SCRIPTS = Path.home() / "repositories/nanobot-fork/nanobot/skills/claude-code/scripts"
 CLAUDE_SESSION = "claude"
+
+
+def log_exchange(direction: str, source: str, target: str, message: str, response: str = None):
+    """Log P2P exchanges for debugging and monitoring."""
+    if response:
+        logger.info(f"{direction} | {source} → {target} | Q: {message[:100]}... | A: {response[:100]}...")
+    else:
+        logger.info(f"{direction} | {source} → {target} | {message[:200]}")
 
 
 class PromptRequest(BaseModel):
@@ -136,21 +162,28 @@ async def status():
 
 
 @app.post("/ask", response_model=PromptResponse)
-async def ask(request: PromptRequest):
+async def ask(request: PromptRequest, req: Request):
     """
     Send a prompt to Claude Code and get the response.
 
     Used by ARGUS for P2P communication.
     """
+    # Identify caller
+    caller = req.headers.get("X-Source", "unknown")
+
     # Check session first
     session_status = check_tmux_session(CLAUDE_SESSION)
     if session_status == "stopped":
+        log_exchange("IN", caller, "nanobot", request.prompt, "ERROR: session stopped")
         raise HTTPException(
             status_code=503,
             detail="Claude tmux session not running. Start with: systemctl --user start claude-tmux"
         )
 
     success, response = ask_claude(request.prompt, request.timeout)
+
+    # Log the exchange
+    log_exchange("IN", caller, "claude", request.prompt, response if success else f"ERROR: {response}")
 
     return PromptResponse(
         success=success,
@@ -207,6 +240,38 @@ async def list_skills():
             })
 
     return {"skills": skills}
+
+
+@app.get("/logs")
+async def get_logs(lines: int = 50):
+    """
+    Get recent P2P exchange logs.
+
+    Use this to monitor what's being exchanged between ARGUS and Nanobot.
+    """
+    if not LOG_FILE.exists():
+        return {"logs": [], "file": str(LOG_FILE)}
+
+    try:
+        with open(LOG_FILE, 'r') as f:
+            all_lines = f.readlines()
+            recent = all_lines[-lines:] if len(all_lines) > lines else all_lines
+            return {
+                "logs": [line.strip() for line in recent],
+                "total_lines": len(all_lines),
+                "showing": len(recent),
+                "file": str(LOG_FILE)
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/logs")
+async def clear_logs():
+    """Clear the P2P exchange logs."""
+    if LOG_FILE.exists():
+        LOG_FILE.unlink()
+    return {"status": "cleared"}
 
 
 if __name__ == "__main__":
