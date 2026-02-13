@@ -249,9 +249,60 @@ def handle_github_dialog(conv_id: str, user_input: str, repo: str = "doobidoo/mc
             "done": False
         }
 
+    # Handle "ja" - ask Claude Code for solution
+    if context.get("waiting_for_claude") and user_lower in ["ja", "yes", "ok"]:
+        issue = next((i for i in issues if i["number"] == selected), {})
+        update_context(conv_id, "waiting_for_claude", False)
+
+        # Build prompt for Claude Code
+        prompt = f"""Analysiere GitHub Issue #{selected} aus {context.get('repo', repo)}:
+
+Titel: {issue.get('title', 'Unknown')}
+Labels: {', '.join(issue.get('labels', []))}
+Erstellt: {issue.get('created', 'unknown')}
+
+Gib einen kurzen Lösungsvorschlag (max 5 Zeilen). Antworte auf Deutsch."""
+
+        # Call Claude Code
+        from .server import ask_claude
+        success, claude_response = ask_claude(prompt, timeout=90)
+
+        if success:
+            response = f"🤖 **Claude Code Vorschlag für #{selected}:**\n\n{claude_response}\n\n"
+            response += "Noch etwas? ('zurück' für andere Issues, 'fertig' zum Beenden)"
+        else:
+            response = f"❌ Claude Code konnte nicht antworten: {claude_response}\n\n"
+            response += "Versuche es später nochmal. ('zurück', 'fertig')"
+
+        add_message(conv_id, "nanobot", response)
+
+        return {
+            "response": response,
+            "options": ["zurück", "fertig"],
+            "waiting_for": "post_claude",
+            "done": False
+        }
+
+    # Handle "nein" - skip Claude Code
+    if context.get("waiting_for_claude") and user_lower in ["nein", "no", "nee"]:
+        update_context(conv_id, "waiting_for_claude", False)
+        response = "👍 Ok, kein Problem. Was möchtest du tun?\n"
+        response += "- 'zurück' - Andere Issues anschauen\n"
+        response += "- 'fertig' - Dialog beenden"
+
+        add_message(conv_id, "nanobot", response)
+
+        return {
+            "response": response,
+            "options": ["zurück", "fertig"],
+            "waiting_for": "action_selection",
+            "done": False
+        }
+
     if "zurück" in user_lower:
         # Reset to issue list
         update_context(conv_id, "selected_issue", None)
+        update_context(conv_id, "waiting_for_claude", False)
         response = "📋 Zurück zur Issue-Liste:\n\n"
         for i, issue in enumerate(issues[:5], 1):
             response += f"{i}. **#{issue['number']}** {issue['title'][:50]}\n"

@@ -20,9 +20,6 @@ if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     exit 1
 fi
 
-# Get baseline line count
-BASELINE=$(tmux capture-pane -t "$SESSION" -p | wc -l)
-
 # Send the prompt (split into text + Enter for reliability)
 tmux send-keys -t "$SESSION" -l "$PROMPT"
 sleep 0.3
@@ -31,7 +28,6 @@ tmux send-keys -t "$SESSION" Enter
 # Wait for response with timeout
 ELAPSED=0
 STABLE_COUNT=0
-LAST_LINES=$BASELINE
 
 while [[ $ELAPSED -lt $TIMEOUT ]]; do
     sleep 2
@@ -39,7 +35,6 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
 
     # Check current output
     CURRENT=$(tmux capture-pane -t "$SESSION" -p)
-    CURRENT_LINES=$(echo "$CURRENT" | wc -l)
 
     # Check if Claude is done (prompt symbol appeared and lines stable)
     if echo "$CURRENT" | tail -5 | grep -q "^❯ *$"; then
@@ -51,9 +46,26 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
     else
         STABLE_COUNT=0
     fi
-
-    LAST_LINES=$CURRENT_LINES
 done
 
-# Capture and output the response
-tmux capture-pane -t "$SESSION" -p -S -200
+# Capture output
+OUTPUT=$(tmux capture-pane -t "$SESSION" -p -S -100)
+
+# Extract the LAST response block (everything between the second-to-last ❯ and the final ❯)
+# This captures all ● lines and their indented content
+echo "$OUTPUT" | awk '
+    /^❯/ {
+        # Save current block as previous, start new block
+        prev_block = curr_block
+        curr_block = ""
+        next
+    }
+    /^●/ || /^  / {
+        # Accumulate response content (● lines and indented continuation)
+        curr_block = curr_block $0 "\n"
+    }
+    END {
+        # Print the previous block (the completed response before the final empty ❯)
+        print prev_block
+    }
+' | grep -v "^$" | head -30
