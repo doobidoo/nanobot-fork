@@ -50,6 +50,11 @@ def send_to_argus(message: str, source: str = "nanobot") -> dict:
     """
     Send a message to ARGUS.
 
+    Note: ARGUS API is at /api/* (not root)
+    """
+    """
+    Send a message to ARGUS.
+
     Args:
         message: The message text to send
         source: Identifier for the sender (default: nanobot)
@@ -72,7 +77,7 @@ def send_to_argus(message: str, source: str = "nanobot") -> dict:
         }
 
         r = requests.post(
-            f"{ARGUS_URL}/message",
+            f"{ARGUS_URL}/api/message",
             json=payload,
             headers={"Content-Type": "application/json"},
             timeout=ARGUS_TIMEOUT
