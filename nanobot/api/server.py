@@ -71,6 +71,72 @@ class PromptRequest(BaseModel):
     timeout: int = 60
 
 
+def handle_email_command(message: str) -> dict | None:
+    """
+    Detect and handle email commands in messages.
+    Returns the result if handled, None if not an email command.
+    """
+    import re
+    lower_message = message.lower()
+
+    # Detect email request patterns (German and English)
+    email_patterns = [
+        r'(?:schick|send|sende|mail|email)[^\n]*(?:an|to|@)',
+        r'(?:email|mail)\s+(?:an|to|schicken|senden)',
+        r'(?:schreib|write)[^\n]*(?:email|mail)',
+        r'diagram[^\n]*(?:schicken|senden|send|mail)',
+    ]
+
+    is_email_request = any(re.search(p, message, re.IGNORECASE) for p in email_patterns)
+
+    if not is_email_request:
+        return None
+
+    logger.info("Email command detected, parsing...")
+
+    # Extract email address
+    email_match = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', message)
+    to = email_match.group(1) if email_match else "henry.krupp@gmail.com"
+
+    # Extract subject
+    subject_match = (
+        re.search(r'(?:betreff|subject|mit\s+betreff)[:\s]+["\']?([^"\'\n@]+?)(?:\s+an\s+|\s+to\s+|["\']|$)', message, re.IGNORECASE) or
+        re.search(r'["\']([^"\']+)["\']', message)
+    )
+    subject = subject_match.group(1).strip() if subject_match else "Nachricht von Nanobot"
+
+    # Check for diagram attachment
+    diagram_match = re.search(r'(?:diagram|diagramm|bild|image|png|svg)[^\n]*(?:anhang|attach|anfügen)?', message, re.IGNORECASE)
+    diagram_path_match = re.search(r'(?:datei|file|path)[:\s]+["\']?([^"\'\n\s]+(?:\.png|\.svg|\.pdf))["\']?', message, re.IGNORECASE)
+
+    # Build body
+    body = message
+    for pattern in [email_match, subject_match]:
+        if pattern:
+            body = body.replace(pattern.group(0), '')
+    body = re.sub(r'(?:schick|send|sende|mail|email|an|to|betreff|subject)[:\s]*', '', body, flags=re.IGNORECASE).strip()
+    if len(body) < 5:
+        body = message
+
+    # Import and send
+    from .email_client import send_email, send_diagram
+
+    if diagram_match and diagram_path_match:
+        logger.info(f"Sending diagram via email: {diagram_path_match.group(1)} to {to}")
+        result = send_diagram(diagram_path_match.group(1), subject)
+        if result.get("success"):
+            return {"success": True, "response": f"✅ Diagramm \"{subject}\" wurde an {to} gesendet."}
+        else:
+            return {"success": False, "error": f"❌ Fehler: {result.get('error')}"}
+    else:
+        logger.info(f"Sending email via Mutt to {to}")
+        result = send_email(to, subject, body)
+        if result.get("success"):
+            return {"success": True, "response": f"✅ Email \"{subject}\" wurde an {to} gesendet."}
+        else:
+            return {"success": False, "error": f"❌ Fehler: {result.get('error')}"}
+
+
 class SkillRequest(BaseModel):
     skill: str
     args: Optional[str] = None
@@ -185,9 +251,20 @@ async def ask(request: PromptRequest, req: Request):
     Send a prompt to Claude Code and get the response.
 
     Used by ARGUS for P2P communication.
+    Handles special commands (email, etc.) directly without forwarding to Claude.
     """
     # Identify caller
     caller = req.headers.get("X-Source", "unknown")
+
+    # Check for special commands (email, etc.) before forwarding to Claude
+    email_result = handle_email_command(request.prompt)
+    if email_result:
+        log_exchange("IN", caller, "nanobot", request.prompt, email_result.get("response") or email_result.get("error"))
+        return PromptResponse(
+            success=email_result.get("success", False),
+            response=email_result.get("response"),
+            error=email_result.get("error")
+        )
 
     # Check session first
     session_status = check_tmux_session(CLAUDE_SESSION)
