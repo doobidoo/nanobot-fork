@@ -632,14 +632,20 @@ class EmailRequest(BaseModel):
     to: str
     subject: str
     body: str
+    attachments: Optional[List[str]] = None  # List of file paths
 
 
 @app.post("/email/send")
 async def send_email_endpoint(request: EmailRequest):
-    """Send an email via Mutt."""
+    """Send an email via Mutt, optionally with attachments."""
     from .email_client import send_email
 
-    result = send_email(request.to, request.subject, request.body)
+    result = send_email(
+        request.to,
+        request.subject,
+        request.body,
+        attachments=request.attachments
+    )
     return result
 
 
@@ -649,6 +655,15 @@ async def email_notify(subject: str, body: str):
     from .email_client import notify_by_email
 
     result = notify_by_email(subject, body)
+    return result
+
+
+@app.post("/email/diagram")
+async def email_diagram(file_path: str, title: str = "Diagram"):
+    """Send a diagram file as email attachment."""
+    from .email_client import send_diagram
+
+    result = send_diagram(file_path, title)
     return result
 
 
