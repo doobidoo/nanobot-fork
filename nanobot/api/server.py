@@ -624,6 +624,34 @@ async def github_watch_and_notify(owner: str, repo: str):
     return result
 
 
+# ============================================
+# Email Endpoint
+# ============================================
+
+class EmailRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+
+
+@app.post("/email/send")
+async def send_email_endpoint(request: EmailRequest):
+    """Send an email via Mutt."""
+    from .email_client import send_email
+
+    result = send_email(request.to, request.subject, request.body)
+    return result
+
+
+@app.post("/email/notify")
+async def email_notify(subject: str, body: str):
+    """Send notification email to owner."""
+    from .email_client import notify_by_email
+
+    result = notify_by_email(subject, body)
+    return result
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
